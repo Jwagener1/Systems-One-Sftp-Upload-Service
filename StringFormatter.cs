@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
-using Serilog;
+using Microsoft.Extensions.Logging;
 using Systems_One_Sftp_Upload_Service.Models;
 
 namespace Systems_One_Sftp_Upload_Service
 {
     /// <summary>
-    /// Utility class for formatting strings based on the message format settings
+    /// Legacy utility class for formatting strings - maintained for backward compatibility
+    /// Consider using MessageFormatter for new implementations
     /// </summary>
     public class StringFormatter
     {
@@ -21,7 +22,7 @@ namespace Systems_One_Sftp_Upload_Service
         public StringFormatter(MessageFormatSettings formatSettings, ILogger logger)
         {
             _formatSettings = formatSettings ?? throw new ArgumentNullException(nameof(formatSettings));
-            _logger = logger ?? Log.Logger;
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         /// <summary>
@@ -36,12 +37,11 @@ namespace Systems_One_Sftp_Upload_Service
 
             try
             {
-                // Use the FormatMessage method from MessageFormatSettings
                 return _formatSettings.FormatMessage(data);
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Error formatting data: {Error}", ex.Message);
+                _logger.LogError(ex, "Error formatting data");
                 throw;
             }
         }
@@ -56,6 +56,12 @@ namespace Systems_One_Sftp_Upload_Service
 
             if (_formatSettings.StringFormatItems == null)
                 return sampleData;
+            
+            // Sample dimensions for Weight_Ratio calculation
+            decimal sampleLength = 100m;
+            decimal sampleWidth = 45.67m;
+            decimal sampleHeight = 89m;
+            decimal sampleWeight = 300m; // in grams
 
             foreach (var item in _formatSettings.StringFormatItems)
             {
@@ -66,7 +72,13 @@ namespace Systems_One_Sftp_Upload_Service
                 switch (item.FieldType)
                 {
                     case "Weight_Ratio":
-                        sampleData[item.FieldType] = 12.34m;
+                        // Calculate Weight_Ratio using the formula: ((L*W*H)/10000) - (weight/1000)
+                        var volumeBasedWeight = (sampleLength * sampleWidth * sampleHeight) / 10000m;
+                        var actualWeightInKg = sampleWeight / 1000m;
+                        var weightRatio = volumeBasedWeight - actualWeightInKg;
+                        sampleData[item.FieldType] = weightRatio;
+                        _logger.LogDebug("Sample Weight_Ratio calculation: ({Length}*{Width}*{Height})/10000 - {Weight}/1000 = {WeightRatio}", 
+                            sampleLength, sampleWidth, sampleHeight, sampleWeight, weightRatio);
                         break;
                     case "LiquidVolume":
                         sampleData[item.FieldType] = 56.78m;
@@ -75,13 +87,13 @@ namespace Systems_One_Sftp_Upload_Service
                         sampleData[item.FieldType] = "ABC123456789";
                         break;
                     case "Length":
-                        sampleData[item.FieldType] = 100;
+                        sampleData[item.FieldType] = sampleLength;
                         break;
                     case "Width":
-                        sampleData[item.FieldType] = 45.67m;
+                        sampleData[item.FieldType] = sampleWidth;
                         break;
                     case "Height":
-                        sampleData[item.FieldType] = 89;
+                        sampleData[item.FieldType] = sampleHeight;
                         break;
                     default:
                         sampleData[item.FieldType] = $"Sample_{item.FieldType}";
@@ -133,7 +145,7 @@ namespace Systems_One_Sftp_Upload_Service
 
                 if (!data.ContainsKey(item.FieldType))
                 {
-                    _logger.Warning("Missing required field {FieldType} in data", item.FieldType);
+                    _logger.LogWarning("Missing required field {FieldType} in data", item.FieldType);
                     return false;
                 }
 
@@ -142,7 +154,7 @@ namespace Systems_One_Sftp_Upload_Service
                 {
                     if (!(data[item.FieldType] is decimal || data[item.FieldType] is int || data[item.FieldType] is double || data[item.FieldType] is float))
                     {
-                        _logger.Warning("Field {FieldType} should be a numeric value", item.FieldType);
+                        _logger.LogWarning("Field {FieldType} should be a numeric value", item.FieldType);
                         return false;
                     }
                 }

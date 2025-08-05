@@ -77,7 +77,12 @@ namespace Systems_One_Sftp_Upload_Service
                 
                 var settings = new AppSettings
                 {
-                    General = new GeneralSettings { UploadInterval = "500" },
+                    General = new GeneralSettings 
+                    { 
+                        UploadInterval = "500",
+                        ArchiveRetentionDays = "30",
+                        AutoArchiveAfterUpload = true
+                    },
                     Sftp = new SftpSettings
                     {
                         Host = "192.168.1.16",
@@ -97,10 +102,12 @@ namespace Systems_One_Sftp_Upload_Service
                     FileSettings = new FileSettings
                     {
                         FileNamePrefix = "upload_",
-                        FileNameSuffix = ".txt"
+                        FileNameSuffix = ".txt",
+                        DateTimeFormat = "yyyyMMdd_HHmmss"
                     },
                     MessageFormat = new MessageFormatSettings
                     {
+                        DecimalSeparator = ".",
                         StringFormatItems = new List<StringFormatItem>
                         {
                             new StringFormatItem { FieldType = "Weight_Ratio", FixedLength = 10, DecimalPlaces = 2, Position = 1 },
@@ -133,7 +140,24 @@ namespace Systems_One_Sftp_Upload_Service
             if (settings.General == null)
             {
                 Log.Warning("General settings are not specified. Using default General settings.");
-                settings.General = new GeneralSettings { UploadInterval = "500" };
+                settings.General = new GeneralSettings 
+                { 
+                    UploadInterval = "500",
+                    ArchiveRetentionDays = "30",
+                    AutoArchiveAfterUpload = true
+                };
+            }
+            else
+            {
+                // Validate and set defaults for missing settings
+                if (string.IsNullOrEmpty(settings.General.ArchiveRetentionDays))
+                {
+                    Log.Information("ArchiveRetentionDays not specified. Using default 30 days");
+                    settings.General.ArchiveRetentionDays = "30";
+                }
+                
+                Log.Information("Archive settings: Retention={RetentionDays} days, AutoArchive={AutoArchive}", 
+                    settings.General.GetArchiveRetentionDays(), settings.General.AutoArchiveAfterUpload);
             }
             
             // Initialize SFTP settings if not present
@@ -171,8 +195,29 @@ namespace Systems_One_Sftp_Upload_Service
                 settings.FileSettings = new FileSettings
                 {
                     FileNamePrefix = "upload_",
-                    FileNameSuffix = ".txt"
+                    FileNameSuffix = ".txt",
+                    DateTimeFormat = "yyyyMMdd_HHmmss"
                 };
+            }
+            else
+            {
+                // Validate DateTimeFormat if specified
+                if (!string.IsNullOrEmpty(settings.FileSettings.DateTimeFormat) && !settings.FileSettings.IsDateTimeFormatValid())
+                {
+                    Log.Warning("Invalid DateTimeFormat '{InvalidFormat}' specified. Using default 'yyyyMMdd_HHmmss'", settings.FileSettings.DateTimeFormat);
+                    settings.FileSettings.DateTimeFormat = "yyyyMMdd_HHmmss";
+                }
+                else if (string.IsNullOrEmpty(settings.FileSettings.DateTimeFormat))
+                {
+                    Log.Information("DateTimeFormat not specified. Using default 'yyyyMMdd_HHmmss'");
+                    settings.FileSettings.DateTimeFormat = "yyyyMMdd_HHmmss";
+                }
+                else
+                {
+                    Log.Information("Using DateTimeFormat: '{DateTimeFormat}' (Example: {Example})", 
+                        settings.FileSettings.DateTimeFormat, 
+                        settings.FileSettings.GetDateTimeFormatExample());
+                }
             }
             
             // Initialize MessageFormat if not present
@@ -181,8 +226,14 @@ namespace Systems_One_Sftp_Upload_Service
                 Log.Warning("MessageFormat is not specified in settings. Using default MessageFormat settings.");
                 settings.MessageFormat = new MessageFormatSettings
                 {
+                    DecimalSeparator = ".",
                     StringFormatItems = new List<StringFormatItem>()
                 };
+            }
+            else if (string.IsNullOrEmpty(settings.MessageFormat.DecimalSeparator))
+            {
+                Log.Information("DecimalSeparator not specified. Using default decimal separator '.'");
+                settings.MessageFormat.DecimalSeparator = ".";
             }
         }
     }

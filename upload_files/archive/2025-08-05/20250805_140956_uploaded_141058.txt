@@ -1,0 +1,6 @@
+# Upload File Generated: 2025-08-05 14:10:56
+# Settings: yyyyMMdd_HHmmss
+# Message Length: 70 characters
+# Data Fields: Weight_Ratio, LiquidVolume, Barcode, Length, Width, Height
+#
+     12.34    56.78ABC123456789            2100.00     45.67     89.12

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -47,6 +48,16 @@ namespace Systems_One_Sftp_Upload_Service.Models
         public string? UploadInterval { get; set; }
         
         /// <summary>
+        /// Number of days to keep archived files before deletion
+        /// </summary>
+        public string? ArchiveRetentionDays { get; set; }
+        
+        /// <summary>
+        /// Whether to automatically archive files after successful upload
+        /// </summary>
+        public bool AutoArchiveAfterUpload { get; set; } = true;
+        
+        /// <summary>
         /// Gets the upload interval as an integer
         /// </summary>
         public int GetUploadIntervalMs()
@@ -56,6 +67,18 @@ namespace Systems_One_Sftp_Upload_Service.Models
             
             // Default to 500ms if parsing fails
             return 500;
+        }
+        
+        /// <summary>
+        /// Gets the archive retention period in days
+        /// </summary>
+        public int GetArchiveRetentionDays()
+        {
+            if (int.TryParse(ArchiveRetentionDays, out int days))
+                return days;
+            
+            // Default to 30 days if parsing fails
+            return 30;
         }
     }
 
@@ -133,11 +156,35 @@ namespace Systems_One_Sftp_Upload_Service.Models
         public string? Password { get; set; }
         
         /// <summary>
-        /// Gets a properly formatted connection string
+        /// Whether to trust the server certificate (useful for development environments with self-signed certificates)
+        /// </summary>
+        public bool? TrustServerCertificate { get; set; }
+        
+        /// <summary>
+        /// Connection timeout in seconds
+        /// </summary>
+        public int? ConnectionTimeoutSeconds { get; set; }
+        
+        /// <summary>
+        /// Gets a properly formatted connection string with SSL certificate trust settings
         /// </summary>
         public string GetConnectionString()
         {
-            return $"Server={Server};Database={DatabaseName};User Id={Username};Password={Password};";
+            var connectionStringBuilder = new System.Text.StringBuilder();
+            connectionStringBuilder.Append($"Server={Server};");
+            connectionStringBuilder.Append($"Database={DatabaseName};");
+            connectionStringBuilder.Append($"User Id={Username};");
+            connectionStringBuilder.Append($"Password={Password};");
+            
+            // Add SSL certificate trust setting (default to true for compatibility)
+            bool trustCert = TrustServerCertificate ?? true;
+            connectionStringBuilder.Append($"TrustServerCertificate={trustCert.ToString().ToLower()};");
+            
+            // Add connection timeout (default to 30 seconds)
+            int timeout = ConnectionTimeoutSeconds ?? 30;
+            connectionStringBuilder.Append($"Connection Timeout={timeout};");
+            
+            return connectionStringBuilder.ToString();
         }
     }
 
@@ -157,13 +204,77 @@ namespace Systems_One_Sftp_Upload_Service.Models
         public string? FileNameSuffix { get; set; }
         
         /// <summary>
+        /// Date-time format pattern for the file name (e.g., "yyyyMMdd_HHmmss", "yyyy-MM-dd_HH-mm-ss")
+        /// If null or empty, defaults to "yyyyMMdd_HHmmss"
+        /// </summary>
+        public string? DateTimeFormat { get; set; }
+        
+        /// <summary>
+        /// Gets the date-time format to use, with fallback to default
+        /// </summary>
+        public string GetDateTimeFormat()
+        {
+            return !string.IsNullOrEmpty(DateTimeFormat) ? DateTimeFormat : "yyyyMMdd_HHmmss";
+        }
+        
+        /// <summary>
         /// Generates a complete file name with date and time
         /// </summary>
         public string GenerateFileName(DateTime? dateTime = null)
         {
             dateTime ??= DateTime.Now;
             
-            return $"{FileNamePrefix ?? "upload_"}{dateTime:yyyyMMdd_HHmmss}{FileNameSuffix ?? ".txt"}";
+            string dateTimeString;
+            try
+            {
+                dateTimeString = dateTime.Value.ToString(GetDateTimeFormat());
+            }
+            catch (FormatException)
+            {
+                // If custom format is invalid, fall back to default
+                dateTimeString = dateTime.Value.ToString("yyyyMMdd_HHmmss");
+                // Note: Can't use logger here as this is a model class, but the calling code should handle this
+            }
+            
+            return $"{FileNamePrefix ?? "upload_"}{dateTimeString}{FileNameSuffix ?? ".txt"}";
+        }
+        
+        /// <summary>
+        /// Validates the DateTimeFormat pattern
+        /// </summary>
+        /// <returns>True if the format is valid, false otherwise</returns>
+        public bool IsDateTimeFormatValid()
+        {
+            if (string.IsNullOrEmpty(DateTimeFormat))
+                return true; // null/empty is valid (uses default)
+                
+            try
+            {
+                DateTime.Now.ToString(DateTimeFormat);
+                return true;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
+        }
+        
+        /// <summary>
+        /// Gets example output for the current DateTimeFormat
+        /// </summary>
+        /// <param name="sampleDateTime">Optional sample date to use for example</param>
+        /// <returns>Example formatted string</returns>
+        public string GetDateTimeFormatExample(DateTime? sampleDateTime = null)
+        {
+            var sample = sampleDateTime ?? new DateTime(2025, 7, 22, 7, 39, 3);
+            try
+            {
+                return sample.ToString(GetDateTimeFormat());
+            }
+            catch (FormatException)
+            {
+                return $"Invalid format: {DateTimeFormat}";
+            }
         }
     }
 
@@ -186,6 +297,11 @@ namespace Systems_One_Sftp_Upload_Service.Models
         /// End character for the message
         /// </summary>
         public string? MessageEndCharacter { get; set; }
+        
+        /// <summary>
+        /// Decimal separator character for numeric formatting (e.g., "." or ",")
+        /// </summary>
+        public string? DecimalSeparator { get; set; }
         
         /// <summary>
         /// List of format items defining the message structure
@@ -217,17 +333,17 @@ namespace Systems_One_Sftp_Upload_Service.Models
                 // Use custom value if field type is Custom
                 if (item.FieldType == "Custom")
                 {
-                    formattedValue = item.FormatValue(item.CustomValue);
+                    formattedValue = item.FormatValue(item.CustomValue, DecimalSeparator);
                 }
                 // Try to get the value from the dictionary
                 else if (item.FieldType != null && values.TryGetValue(item.FieldType, out var value))
                 {
-                    formattedValue = item.FormatValue(value);
+                    formattedValue = item.FormatValue(value, DecimalSeparator);
                 }
                 // Use empty space if no value found
                 else
                 {
-                    formattedValue = item.FormatValue(null);
+                    formattedValue = item.FormatValue(null, DecimalSeparator);
                 }
                 
                 formattedItems.Add(formattedValue);
@@ -298,7 +414,9 @@ namespace Systems_One_Sftp_Upload_Service.Models
         /// <summary>
         /// Format a value according to the field type specifications
         /// </summary>
-        public string FormatValue(object? value)
+        /// <param name="value">The value to format</param>
+        /// <param name="decimalSeparator">Custom decimal separator (optional)</param>
+        public string FormatValue(object? value, string? decimalSeparator = null)
         {
             // Handle null value
             if (value == null)
@@ -306,30 +424,101 @@ namespace Systems_One_Sftp_Upload_Service.Models
                 
             // For custom values, return the custom value
             if (FieldType == "Custom" && CustomValue != null)
-                return PadToLength(CustomValue);
-                
-            // For numeric values, format with decimal places
-            if (value is decimal decimalValue && DecimalPlaces.HasValue)
+                return PadToLength(CustomValue, isNumeric: false);
+            
+            string valueString;
+            string prefixChar = GetPrefixChar() ?? "";
+            bool isNumericField = DecimalPlaces.HasValue;
+            
+            // Handle different numeric types with decimal places
+            if (DecimalPlaces.HasValue)
             {
+                decimal decimalValue = 0;
+                
+                // Convert various numeric types to decimal
+                switch (value)
+                {
+                    case decimal d:
+                        decimalValue = d;
+                        break;
+                    case double dbl:
+                        decimalValue = (decimal)dbl;
+                        break;
+                    case float f:
+                        decimalValue = (decimal)f;
+                        break;
+                    case int i:
+                        decimalValue = i;
+                        break;
+                    case long l:
+                        decimalValue = l;
+                        break;
+                    case short s:
+                        decimalValue = s;
+                        break;
+                    default:
+                        // Try to parse as decimal
+                        if (decimal.TryParse(value.ToString(), out decimal parsed))
+                            decimalValue = parsed;
+                        else
+                            return PadToLength(prefixChar + value.ToString(), isNumeric: false);
+                        break;
+                }
+                
                 string format = $"F{DecimalPlaces.Value}";
-                string formattedValue = decimalValue.ToString(format);
-                return PadToLength(GetPrefixChar() + formattedValue);
+                valueString = decimalValue.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+                
+                // Apply custom decimal separator if specified
+                if (!string.IsNullOrEmpty(decimalSeparator) && decimalSeparator != ".")
+                {
+                    valueString = valueString.Replace(".", decimalSeparator);
+                }
+            }
+            else
+            {
+                // Default string formatting for non-decimal values
+                valueString = value.ToString() ?? "";
+                // Check if it's a numeric type even without DecimalPlaces specified
+                isNumericField = IsNumericType(value);
             }
             
-            // Default string formatting
-            return PadToLength(GetPrefixChar() + value.ToString());
+            return PadToLength(prefixChar + valueString, isNumeric: isNumericField);
+        }
+        
+        /// <summary>
+        /// Checks if a value is of a numeric type
+        /// </summary>
+        private static bool IsNumericType(object? value)
+        {
+            return value is decimal or double or float or int or long or short or byte or sbyte;
         }
         
         /// <summary>
         /// Pads the string to the fixed length if specified
         /// </summary>
-        private string PadToLength(string? input)
+        /// <param name="input">Input string to pad</param>
+        /// <param name="isNumeric">True if this is a numeric field (use left padding), false for text fields (use right padding)</param>
+        private string PadToLength(string? input, bool isNumeric = false)
         {
             if (input == null)
                 input = string.Empty;
                 
             if (FixedLength.HasValue)
-                return input.PadRight(FixedLength.Value);
+            {
+                if (input.Length > FixedLength.Value)
+                {
+                    // Truncate if too long
+                    return input.Substring(0, FixedLength.Value);
+                }
+                else
+                {
+                    // Use left padding for numeric fields, right padding for text fields
+                    if (isNumeric)
+                        return input.PadLeft(FixedLength.Value);
+                    else
+                        return input.PadRight(FixedLength.Value);
+                }
+            }
                 
             return input;
         }

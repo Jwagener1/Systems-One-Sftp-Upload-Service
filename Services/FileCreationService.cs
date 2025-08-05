@@ -1,0 +1,656 @@
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
+using Systems_One_Sftp_Upload_Service.Models;
+
+namespace Systems_One_Sftp_Upload_Service.Services
+{
+    /// <summary>
+    /// Service for creating and managing upload files
+    /// </summary>
+    public class FileCreationService
+    {
+        private readonly ILogger<FileCreationService> _logger;
+        private readonly AppSettings _settings;
+        private readonly MessageFormatter _messageFormatter;
+
+        public FileCreationService(ILogger<FileCreationService> logger, AppSettings settings, MessageFormatter messageFormatter)
+        {
+            _logger = logger;
+            _settings = settings;
+            _messageFormatter = messageFormatter;
+        }
+
+        /// <summary>
+        /// Gets the upload directory path based on build configuration
+        /// </summary>
+        /// <returns>The directory path for upload files</returns>
+        public string GetUploadDirectory()
+        {
+#if DEBUG
+            // For DEBUG, create files in project root/upload_files folder
+            var projectRoot = Directory.GetCurrentDirectory();
+            return Path.Combine(projectRoot, "upload_files");
+#else
+            // For RELEASE, use a system directory
+            var publicDocs = Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments);
+            return Path.Combine(publicDocs, "SysOne_Upload_Service", "uploads");
+#endif
+        }
+
+        /// <summary>
+        /// Creates the upload directory if it doesn't exist
+        /// </summary>
+        /// <returns>The created directory path</returns>
+        public string EnsureUploadDirectoryExists()
+        {
+            var uploadDir = GetUploadDirectory();
+            
+            if (!Directory.Exists(uploadDir))
+            {
+                Directory.CreateDirectory(uploadDir);
+                _logger.LogInformation("Created upload directory: {UploadDirectory}", uploadDir);
+            }
+            else
+            {
+                _logger.LogDebug("Upload directory already exists: {UploadDirectory}", uploadDir);
+            }
+            
+            return uploadDir;
+        }
+
+        /// <summary>
+        /// Creates a sample upload file with formatted data
+        /// </summary>
+        /// <param name="customDateTime">Optional custom datetime for filename</param>
+        /// <returns>The full path of the created file</returns>
+        public async Task<string> CreateSampleUploadFileAsync(DateTime? customDateTime = null)
+        {
+            try
+            {
+                // Ensure directory exists
+                var uploadDir = EnsureUploadDirectoryExists();
+                
+                // Generate filename using settings
+                var fileName = _settings.FileSettings?.GenerateFileName(customDateTime) ?? 
+                               $"upload_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+                
+                var filePath = Path.Combine(uploadDir, fileName);
+                
+                // Create sample data
+                var sampleData = _messageFormatter.CreateSampleData();
+                
+                // Format the message
+                var formattedMessage = _messageFormatter.FormatMessage(sampleData);
+                
+                // Create file content with header information
+                var fileContent = $"# Upload File Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n";
+                fileContent += $"# Settings: {_settings.FileSettings?.GetDateTimeFormat()}\n";
+                fileContent += $"# Message Length: {formattedMessage.Length} characters\n";
+                fileContent += $"# Data Fields: {string.Join(", ", sampleData.Keys)}\n";
+                fileContent += "#\n";
+                fileContent += formattedMessage;
+                
+                // Write to file
+                await File.WriteAllTextAsync(filePath, fileContent);
+                
+                _logger.LogInformation("Created upload file: {FilePath}", filePath);
+                _logger.LogInformation("File content length: {Length} characters", fileContent.Length);
+                _logger.LogDebug("File content preview: {Preview}...", formattedMessage.Length > 50 ? formattedMessage.Substring(0, 50) : formattedMessage);
+                
+                return filePath;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to create upload file");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Creates multiple sample files with different timestamps
+        /// </summary>
+        /// <param name="count">Number of files to create</param>
+        /// <returns>Array of created file paths</returns>
+        public async Task<string[]> CreateMultipleSampleFilesAsync(int count = 3)
+        {
+            var filePaths = new string[count];
+            var baseDateTime = DateTime.Now;
+            
+            _logger.LogInformation("Creating {Count} sample files...", count);
+            
+            for (int i = 0; i < count; i++)
+            {
+                // Create files with different timestamps (1 minute apart)
+                var fileDateTime = baseDateTime.AddMinutes(-i);
+                filePaths[i] = await CreateSampleUploadFileAsync(fileDateTime);
+                
+                // Small delay to ensure different timestamps if format includes seconds
+                await Task.Delay(100);
+            }
+            
+            _logger.LogInformation("Successfully created {Count} sample files", count);
+            return filePaths;
+        }
+
+        /// <summary>
+        /// Creates a file with custom data
+        /// </summary>
+        /// <param name="data">Custom data dictionary</param>
+        /// <param name="customDateTime">Optional custom datetime for filename</param>
+        /// <returns>The full path of the created file</returns>
+        public async Task<string> CreateCustomUploadFileAsync(System.Collections.Generic.Dictionary<string, object> data, DateTime? customDateTime = null)
+        {
+            try
+            {
+                var uploadDir = EnsureUploadDirectoryExists();
+                
+                var fileName = _settings.FileSettings?.GenerateFileName(customDateTime) ?? 
+                               $"custom_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+                
+                var filePath = Path.Combine(uploadDir, fileName);
+                
+                // Validate and format the data
+                var validation = _messageFormatter.ValidateData(data);
+                if (!validation.IsValid)
+                {
+                    _logger.LogWarning("Data validation failed: {ValidationResult}", validation.ToString());
+                }
+                
+                var formattedMessage = _messageFormatter.FormatMessage(data);
+                
+                var fileContent = $"# Custom Upload File Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n";
+                fileContent += $"# Validation: {(validation.IsValid ? "PASSED" : "FAILED")}\n";
+                if (!validation.IsValid)
+                {
+                    fileContent += $"# Validation Issues:\n{validation.ToString().Replace("\n", "\n# ")}\n";
+                }
+                fileContent += $"#\n";
+                fileContent += formattedMessage;
+                
+                await File.WriteAllTextAsync(filePath, fileContent);
+                
+                _logger.LogInformation("Created custom upload file: {FilePath}", filePath);
+                return filePath;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to create custom upload file");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Creates a production upload file with only formatted data (no debug headers)
+        /// </summary>
+        /// <param name="data">Data dictionary to format</param>
+        /// <param name="customDateTime">Optional custom datetime for filename</param>
+        /// <returns>The full path of the created file</returns>
+        public async Task<string> CreateProductionUploadFileAsync(Dictionary<string, object> data, DateTime? customDateTime = null)
+        {
+            try
+            {
+                var uploadDir = EnsureUploadDirectoryExists();
+                
+                var fileName = _settings.FileSettings?.GenerateFileName(customDateTime) ?? 
+                               $"upload_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+                
+                var filePath = Path.Combine(uploadDir, fileName);
+                
+                // Format the message without any headers - just the raw data
+                var formattedMessage = _messageFormatter.FormatMessage(data);
+                
+                // Write only the formatted message to file
+                await File.WriteAllTextAsync(filePath, formattedMessage);
+                
+                _logger.LogInformation("Created production upload file: {FilePath}", filePath);
+                _logger.LogDebug("File content: '{Content}'", formattedMessage);
+                
+                return filePath;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to create production upload file");
+                throw;
+            }
+        }
+        
+        /// <summary>
+        /// Creates an upload file - debug version with headers in DEBUG mode, production version in RELEASE mode
+        /// </summary>
+        /// <param name="data">Data dictionary to format</param>
+        /// <param name="customDateTime">Optional custom datetime for filename</param>
+        /// <returns>The full path of the created file</returns>
+        public async Task<string> CreateUploadFileAsync(Dictionary<string, object> data, DateTime? customDateTime = null)
+        {
+#if DEBUG
+            // In DEBUG mode, create files with headers for verification
+            return await CreateCustomUploadFileAsync(data, customDateTime);
+#else
+            // In RELEASE mode, create production files with just the formatted data
+            return await CreateProductionUploadFileAsync(data, customDateTime);
+#endif
+        }
+
+        /// <summary>
+        /// Gets information about existing files in the upload directory
+        /// </summary>
+        /// <returns>Array of file information</returns>
+        public FileInfo[] GetUploadFiles()
+        {
+            var uploadDir = GetUploadDirectory();
+            
+            if (!Directory.Exists(uploadDir))
+            {
+                return Array.Empty<FileInfo>();
+            }
+            
+            var directory = new DirectoryInfo(uploadDir);
+            var files = directory.GetFiles("*.txt").OrderByDescending(f => f.CreationTime).ToArray();
+            
+            _logger.LogInformation("Found {FileCount} upload files in {Directory}", files.Length, uploadDir);
+            
+            return files;
+        }
+
+        /// <summary>
+        /// Cleans up old upload files (keeps only the most recent ones)
+        /// </summary>
+        /// <param name="keepCount">Number of most recent files to keep</param>
+        /// <returns>Number of files deleted</returns>
+        public int CleanupOldFiles(int keepCount = 10)
+        {
+            var files = GetUploadFiles();
+            
+            if (files.Length <= keepCount)
+            {
+                _logger.LogInformation("No cleanup needed. Found {FileCount} files, keeping {KeepCount}", files.Length, keepCount);
+                return 0;
+            }
+            
+            var filesToDelete = files.Skip(keepCount).ToArray();
+            int deletedCount = 0;
+            
+            foreach (var file in filesToDelete)
+            {
+                try
+                {
+                    file.Delete();
+                    deletedCount++;
+                    _logger.LogDebug("Deleted old file: {FileName}", file.Name);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete file: {FileName}", file.Name);
+                }
+            }
+            
+            _logger.LogInformation("Cleanup completed. Deleted {DeletedCount} old files, kept {KeptCount} recent files", 
+                deletedCount, files.Length - deletedCount);
+            
+            return deletedCount;
+        }
+
+        /// <summary>
+        /// Demonstrates the difference between debug and production file creation
+        /// </summary>
+        public async Task<(string debugFile, string productionFile)> CreateComparisonFilesAsync()
+        {
+            var testData = new Dictionary<string, object>
+            {
+                {"Weight_Ratio", 0.08m},
+                {"LiquidVolume", 131.31m},
+                {"Barcode", "TEST123456"},
+                {"Length", 290},
+                {"Width", 2.80m},
+                {"Height", 164}
+            };
+            
+            var uploadDir = EnsureUploadDirectoryExists();
+            
+            // Create debug version (with headers)
+            var debugFileName = $"debug_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+            var debugFilePath = Path.Combine(uploadDir, debugFileName);
+            
+            var formattedMessage = _messageFormatter.FormatMessage(testData);
+            var debugContent = $"# Upload File Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n";
+            debugContent += $"# Settings: {_settings.FileSettings?.GetDateTimeFormat()}\n";
+            debugContent += $"# Message Length: {formattedMessage.Length} characters\n";
+            debugContent += $"# Data Fields: {string.Join(", ", testData.Keys)}\n";
+            debugContent += "#\n";
+            debugContent += formattedMessage;
+            
+            await File.WriteAllTextAsync(debugFilePath, debugContent);
+            
+            // Create production version (no headers)
+            var productionFileName = $"production_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+            var productionFilePath = Path.Combine(uploadDir, productionFileName);
+            
+            await File.WriteAllTextAsync(productionFilePath, formattedMessage);
+            
+            _logger.LogInformation("Created comparison files:");
+            _logger.LogInformation("  Debug file: {DebugFile} ({DebugSize} bytes)", debugFileName, debugContent.Length);
+            _logger.LogInformation("  Production file: {ProductionFile} ({ProductionSize} bytes)", productionFileName, formattedMessage.Length);
+            
+            return (debugFilePath, productionFilePath);
+        }
+
+        /// <summary>
+        /// Gets the archive directory path based on build configuration
+        /// </summary>
+        /// <returns>The directory path for archived files</returns>
+        public string GetArchiveDirectory()
+        {
+#if DEBUG
+            // For DEBUG, create archive in project root/upload_files/archive folder
+            var projectRoot = Directory.GetCurrentDirectory();
+            return Path.Combine(projectRoot, "upload_files", "archive");
+#else
+            // For RELEASE, use a system directory
+            var publicDocs = Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments);
+            return Path.Combine(publicDocs, "SysOne_Upload_Service", "archive");
+#endif
+        }
+
+        /// <summary>
+        /// Creates the archive directory if it doesn't exist
+        /// </summary>
+        /// <returns>The created directory path</returns>
+        public string EnsureArchiveDirectoryExists()
+        {
+            var archiveDir = GetArchiveDirectory();
+            
+            if (!Directory.Exists(archiveDir))
+            {
+                Directory.CreateDirectory(archiveDir);
+                _logger.LogInformation("Created archive directory: {ArchiveDirectory}", archiveDir);
+            }
+            else
+            {
+                _logger.LogDebug("Archive directory already exists: {ArchiveDirectory}", archiveDir);
+            }
+            
+            return archiveDir;
+        }
+
+        /// <summary>
+        /// Archives a file after successful upload by moving it to the archive directory
+        /// </summary>
+        /// <param name="filePath">Path to the file to archive</param>
+        /// <param name="uploadTimestamp">Optional timestamp when the file was uploaded</param>
+        /// <returns>The path where the file was archived</returns>
+        public async Task<string> ArchiveFileAsync(string filePath, DateTime? uploadTimestamp = null)
+        {
+            try
+            {
+                if (!File.Exists(filePath))
+                {
+                    throw new FileNotFoundException($"File not found: {filePath}");
+                }
+
+                var archiveDir = EnsureArchiveDirectoryExists();
+                var fileName = Path.GetFileName(filePath);
+                var timestamp = uploadTimestamp ?? DateTime.Now;
+                
+                // Create a subdirectory for the date to organize archived files
+                var dateFolderName = timestamp.ToString("yyyy-MM-dd");
+                var dateArchiveDir = Path.Combine(archiveDir, dateFolderName);
+                
+                if (!Directory.Exists(dateArchiveDir))
+                {
+                    Directory.CreateDirectory(dateArchiveDir);
+                    _logger.LogDebug("Created date archive directory: {DateArchiveDir}", dateArchiveDir);
+                }
+                
+                // Generate archived filename with upload timestamp
+                var fileNameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
+                var fileExt = Path.GetExtension(fileName);
+                var archivedFileName = $"{fileNameWithoutExt}_uploaded_{timestamp:HHmmss}{fileExt}";
+                var archivedFilePath = Path.Combine(dateArchiveDir, archivedFileName);
+                
+                // Move the file to archive
+                File.Move(filePath, archivedFilePath);
+                
+                _logger.LogInformation("Archived file: {OriginalFile} → {ArchivedFile}", fileName, archivedFileName);
+                
+                return archivedFilePath;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to archive file: {FilePath}", filePath);
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Archives multiple files after successful upload
+        /// </summary>
+        /// <param name="filePaths">Paths to the files to archive</param>
+        /// <param name="uploadTimestamp">Optional timestamp when the files were uploaded</param>
+        /// <returns>Array of archived file paths</returns>
+        public async Task<string[]> ArchiveFilesAsync(IEnumerable<string> filePaths, DateTime? uploadTimestamp = null)
+        {
+            var archivedPaths = new List<string>();
+            var timestamp = uploadTimestamp ?? DateTime.Now;
+            
+            foreach (var filePath in filePaths)
+            {
+                try
+                {
+                    var archivedPath = await ArchiveFileAsync(filePath, timestamp);
+                    archivedPaths.Add(archivedPath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to archive individual file: {FilePath}", filePath);
+                    // Continue with other files even if one fails
+                }
+            }
+            
+            _logger.LogInformation("Successfully archived {ArchivedCount} out of {TotalCount} files", 
+                archivedPaths.Count, filePaths.Count());
+            
+            return archivedPaths.ToArray();
+        }
+
+        /// <summary>
+        /// Gets all files in the upload directory that are ready for upload
+        /// </summary>
+        /// <returns>Array of file paths ready for upload</returns>
+        public string[] GetFilesReadyForUpload()
+        {
+            var uploadDir = GetUploadDirectory();
+            
+            if (!Directory.Exists(uploadDir))
+            {
+                return Array.Empty<string>();
+            }
+            
+            var files = Directory.GetFiles(uploadDir, "*.txt")
+                .Where(f => !Path.GetFileName(f).StartsWith("debug_") && 
+                           !Path.GetFileName(f).StartsWith("production_"))
+                .OrderBy(f => File.GetCreationTime(f))
+                .ToArray();
+            
+            _logger.LogDebug("Found {FileCount} files ready for upload", files.Length);
+            
+            return files;
+        }
+
+        /// <summary>
+        /// Gets information about archived files
+        /// </summary>
+        /// <param name="date">Optional date to filter archived files (null for all dates)</param>
+        /// <returns>Array of archived file information</returns>
+        public FileInfo[] GetArchivedFiles(DateTime? date = null)
+        {
+            var archiveDir = GetArchiveDirectory();
+            
+            if (!Directory.Exists(archiveDir))
+            {
+                return Array.Empty<FileInfo>();
+            }
+            
+            if (date.HasValue)
+            {
+                // Get files from specific date folder
+                var dateFolderName = date.Value.ToString("yyyy-MM-dd");
+                var dateArchiveDir = Path.Combine(archiveDir, dateFolderName);
+                
+                if (!Directory.Exists(dateArchiveDir))
+                {
+                    return Array.Empty<FileInfo>();
+                }
+                
+                var directory = new DirectoryInfo(dateArchiveDir);
+                return directory.GetFiles("*.txt").OrderByDescending(f => f.CreationTime).ToArray();
+            }
+            else
+            {
+                // Get all archived files from all date folders
+                var allFiles = new List<FileInfo>();
+                var archiveDirectory = new DirectoryInfo(archiveDir);
+                
+                foreach (var dateFolder in archiveDirectory.GetDirectories())
+                {
+                    var files = dateFolder.GetFiles("*.txt");
+                    allFiles.AddRange(files);
+                }
+                
+                return allFiles.OrderByDescending(f => f.CreationTime).ToArray();
+            }
+        }
+
+        /// <summary>
+        /// Cleans up old archived files (keeps files for specified number of days)
+        /// </summary>
+        /// <param name="retentionDays">Number of days to keep archived files</param>
+        /// <returns>Number of files deleted</returns>
+        public int CleanupOldArchivedFiles(int retentionDays = 30)
+        {
+            var archiveDir = GetArchiveDirectory();
+            
+            if (!Directory.Exists(archiveDir))
+            {
+                return 0;
+            }
+            
+            var cutoffDate = DateTime.Now.AddDays(-retentionDays);
+            var deletedCount = 0;
+            
+            var archiveDirectory = new DirectoryInfo(archiveDir);
+            
+            foreach (var dateFolder in archiveDirectory.GetDirectories())
+            {
+                if (DateTime.TryParseExact(dateFolder.Name, "yyyy-MM-dd", null, 
+                    System.Globalization.DateTimeStyles.None, out var folderDate))
+                {
+                    if (folderDate < cutoffDate.Date)
+                    {
+                        try
+                        {
+                            var filesInFolder = dateFolder.GetFiles().Length;
+                            dateFolder.Delete(true);
+                            deletedCount += filesInFolder;
+                            _logger.LogInformation("Deleted archived folder: {FolderName} ({FileCount} files)", 
+                                dateFolder.Name, filesInFolder);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to delete archived folder: {FolderName}", dateFolder.Name);
+                        }
+                    }
+                }
+            }
+            
+            _logger.LogInformation("Archive cleanup completed. Deleted {DeletedCount} files older than {RetentionDays} days", 
+                deletedCount, retentionDays);
+            
+            return deletedCount;
+        }
+
+        /// <summary>
+        /// Creates a production upload file from external data source (e.g., database)
+        /// This method is intended for actual production use
+        /// </summary>
+        /// <param name="data">Data dictionary from external source</param>
+        /// <returns>The full path of the created production file</returns>
+        public async Task<string> CreateProductionFileFromDataAsync(Dictionary<string, object> data)
+        {
+            try
+            {
+                var uploadDir = EnsureUploadDirectoryExists();
+                
+                // Generate filename with current timestamp
+                var fileName = _settings.FileSettings?.GenerateFileName() ?? 
+                               $"upload_{DateTime.Now:yyyyMMdd_HHmmss}.txt";
+                
+                var filePath = Path.Combine(uploadDir, fileName);
+                
+                // Validate the data
+                var validation = _messageFormatter.ValidateData(data);
+                if (!validation.IsValid)
+                {
+                    _logger.LogWarning("Data validation failed for production file: {ValidationResult}", validation.ToString());
+                    // In production, you might want to throw an exception or handle this differently
+                }
+                
+                // Format the message (production format - no debug headers)
+                var formattedMessage = _messageFormatter.FormatMessage(data);
+                
+                // Write only the formatted message to file (production format)
+                await File.WriteAllTextAsync(filePath, formattedMessage);
+                
+                _logger.LogInformation("Created production file: {FilePath} ({Size} bytes)", 
+                    filePath, formattedMessage.Length);
+                _logger.LogDebug("Production file content: '{Content}'", formattedMessage);
+                
+                return filePath;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to create production file from data");
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Creates multiple production files from a collection of data records
+        /// </summary>
+        /// <param name="dataRecords">Collection of data dictionaries</param>
+        /// <returns>Array of created file paths</returns>
+        public async Task<string[]> CreateProductionFilesFromDataAsync(IEnumerable<Dictionary<string, object>> dataRecords)
+        {
+            var filePaths = new List<string>();
+            var recordCount = 0;
+            
+            _logger.LogInformation("Creating production files from {RecordCount} data records", dataRecords.Count());
+            
+            foreach (var data in dataRecords)
+            {
+                try
+                {
+                    recordCount++;
+                    var filePath = await CreateProductionFileFromDataAsync(data);
+                    filePaths.Add(filePath);
+                    
+                    // Small delay between file creation to ensure unique timestamps
+                    await Task.Delay(50);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to create production file for record {RecordNumber}", recordCount);
+                    // Continue with other records even if one fails
+                }
+            }
+            
+            _logger.LogInformation("Successfully created {CreatedCount} out of {TotalCount} production files", 
+                filePaths.Count, recordCount);
+            
+            return filePaths.ToArray();
+        }
+    }
+}

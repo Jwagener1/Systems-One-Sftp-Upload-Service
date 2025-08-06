@@ -54,6 +54,13 @@ try
     loggerConfig.WriteTo.Console(
         outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss} [{Level:u3}] {Message:lj}{NewLine}{Exception}"
     );
+#else
+    // In RELEASE mode, we want to be more selective about what gets logged
+    // Configure specific log levels for different namespaces to optimize logging
+    loggerConfig
+        .MinimumLevel.Override("Systems_One_Sftp_Upload_Service.Services.FileCreationService", LogEventLevel.Warning)
+        .MinimumLevel.Override("Systems_One_Sftp_Upload_Service.Worker", LogEventLevel.Information)
+        .MinimumLevel.Override("Microsoft", LogEventLevel.Warning);
 #endif
 
     Log.Logger = loggerConfig.CreateLogger();
@@ -143,14 +150,30 @@ try
         return new StringFormatter(settings.MessageFormat!, logger);
     });
     
-    // Register FileCreationService for file management
+    // Register FileCreationService for file management - use standard FileCreationService
     builder.Services.AddSingleton<FileCreationService>();
+    Log.Information("Using standard FileCreationService with normal logging");
     
     // Register SftpUploadService for SFTP functionality
     builder.Services.AddSingleton<SftpUploadService>();
     
     // Register Data Retrieval Service
-    // Use SQL Server service in production, sample service for demo
+#if DEBUG
+    // In DEBUG mode, always use the SQL Server implementation to pull real data from database
+    builder.Services.AddSingleton<IDataRetrievalService, SqlServerDataRetrievalService>();
+    Log.Information("DEBUG mode: Using SQL Server data retrieval service regardless of configuration");
+    
+    if (settings.Database == null || string.IsNullOrEmpty(settings.Database.Server))
+    {
+        Log.Warning("Database settings are incomplete - connection attempts may fail. Please configure Database settings in upload_settings.json");
+    }
+    else
+    {
+        Log.Information("Database connection will be attempted to: {Server}, Database: {DatabaseName}",
+            settings.Database.Server, settings.Database.DatabaseName);
+    }
+#else
+    // In RELEASE mode, use SQL Server service if configured, otherwise use sample service
     if (settings.Database != null && !string.IsNullOrEmpty(settings.Database.Server))
     {
         builder.Services.AddSingleton<IDataRetrievalService, SqlServerDataRetrievalService>();
@@ -161,6 +184,7 @@ try
         builder.Services.AddSingleton<IDataRetrievalService, SampleDataRetrievalService>();
         Log.Warning("Database settings not configured - using sample data service");
     }
+#endif
 
     Log.Information("All services registered successfully");
     Log.Information("Starting worker service...");

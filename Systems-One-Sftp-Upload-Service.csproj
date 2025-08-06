@@ -6,6 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-Systems_One_Sftp_Upload_Service-a4cac070-156c-41fd-a201-75233e9694c5</UserSecretsId>
     <RootNamespace>Systems_One_Sftp_Upload_Service</RootNamespace>
+    <!-- Disable default content items to avoid duplicate inclusion -->
+    <EnableDefaultContentItems>false</EnableDefaultContentItems>
   </PropertyGroup>
 
   <!-- Set OutputType based on build configuration -->
@@ -31,6 +33,7 @@
   <ItemGroup>
     <Folder Include="Helpers\" />
     <Folder Include="logs\" />
+    <Folder Include="upload_files\" />
   </ItemGroup>
 
   <!-- Only include settings file in Debug builds -->

@@ -274,7 +274,9 @@ namespace Systems_One_Sftp_Upload_Service
         {
             try
             {
+#if DEBUG
                 _logger.LogInformation("=== Processing Data from Database ===");
+#endif
                 
                 // Retrieve data from database
                 var dataRecords = await _dataRetrievalService.GetDataForUploadAsync();
@@ -286,7 +288,17 @@ namespace Systems_One_Sftp_Upload_Service
                     return;
                 }
                 
+#if DEBUG
                 _logger.LogInformation("Retrieved {RecordCount} records from database", recordList.Count);
+#else
+                // In RELEASE mode, log each record individually with barcode for better tracking
+                foreach (var record in recordList)
+                {
+                    string barcode = record.Data.ContainsKey("Barcode") ? 
+                        record.Data["Barcode"]?.ToString() ?? "Unknown" : "Unknown";
+                    _logger.LogInformation("Found unsent entry, barcode: {Barcode}", barcode);
+                }
+#endif
                 
                 // Create production files from database data
                 var dataForFiles = recordList.Select(r => r.Data).ToList();
@@ -294,7 +306,9 @@ namespace Systems_One_Sftp_Upload_Service
                 
                 if (createdFiles.Length > 0)
                 {
+#if DEBUG
                     _logger.LogInformation("Created {FileCount} production files, starting upload", createdFiles.Length);
+#endif
                     
                     // Upload the newly created files
                     var uploadResults = await _sftpUploadService.UploadFilesWithRetryAsync(createdFiles, maxRetries: 3, retryDelayMs: 2000);
@@ -308,6 +322,10 @@ namespace Systems_One_Sftp_Upload_Service
                     {
                         if (uploadResults[i])
                         {
+#if !DEBUG
+                            _logger.LogInformation("File uploaded successfully: {FileName}", 
+                                Path.GetFileName(createdFiles[i]));
+#endif
                             successfullyUploadedFiles.Add(createdFiles[i]);
                         }
                     }
@@ -320,7 +338,9 @@ namespace Systems_One_Sftp_Upload_Service
                         try
                         {
                             await _dataRetrievalService.MarkRecordsAsProcessedAsync(recordIdsToMark);
+#if DEBUG
                             _logger.LogInformation("Marked {RecordCount} database records as processed", recordIdsToMark.Count());
+#endif
                         }
                         catch (Exception ex)
                         {

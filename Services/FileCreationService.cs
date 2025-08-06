@@ -189,7 +189,7 @@ namespace Systems_One_Sftp_Upload_Service.Services
         /// <param name="data">Data dictionary to format</param>
         /// <param name="customDateTime">Optional custom datetime for filename</param>
         /// <returns>The full path of the created file</returns>
-        public async Task<string> CreateProductionUploadFileAsync(Dictionary<string, object> data, DateTime? customDateTime = null)
+        public virtual async Task<string> CreateProductionUploadFileAsync(Dictionary<string, object> data, DateTime? customDateTime = null)
         {
             try
             {
@@ -206,7 +206,7 @@ namespace Systems_One_Sftp_Upload_Service.Services
                 // Write only the formatted message to file
                 await File.WriteAllTextAsync(filePath, formattedMessage);
                 
-                _logger.LogInformation("Created production upload file: {FilePath}", filePath);
+                _logger.LogInformation("Created production file: {FilePath}", filePath);
                 _logger.LogDebug("File content: '{Content}'", formattedMessage);
                 
                 return filePath;
@@ -382,7 +382,7 @@ namespace Systems_One_Sftp_Upload_Service.Services
         /// <param name="filePath">Path to the file to archive</param>
         /// <param name="uploadTimestamp">Optional timestamp when the file was uploaded</param>
         /// <returns>The path where the file was archived</returns>
-        public async Task<string> ArchiveFileAsync(string filePath, DateTime? uploadTimestamp = null)
+        public virtual async Task<string> ArchiveFileAsync(string filePath, DateTime? uploadTimestamp = null)
         {
             try
             {
@@ -410,6 +410,15 @@ namespace Systems_One_Sftp_Upload_Service.Services
                 var fileExt = Path.GetExtension(fileName);
                 var archivedFileName = $"{fileNameWithoutExt}_uploaded_{timestamp:HHmmss}{fileExt}";
                 var archivedFilePath = Path.Combine(dateArchiveDir, archivedFileName);
+                
+                // Handle duplicate filenames by adding a counter if the file already exists
+                int counter = 1;
+                while (File.Exists(archivedFilePath))
+                {
+                    archivedFileName = $"{fileNameWithoutExt}_uploaded_{timestamp:HHmmss}_{counter}{fileExt}";
+                    archivedFilePath = Path.Combine(dateArchiveDir, archivedFileName);
+                    counter++;
+                }
                 
                 // Move the file to archive
                 File.Move(filePath, archivedFilePath);
@@ -578,7 +587,7 @@ namespace Systems_One_Sftp_Upload_Service.Services
         /// </summary>
         /// <param name="data">Data dictionary from external source</param>
         /// <returns>The full path of the created production file</returns>
-        public async Task<string> CreateProductionFileFromDataAsync(Dictionary<string, object> data)
+        public virtual async Task<string> CreateProductionFileFromDataAsync(Dictionary<string, object> data)
         {
             try
             {

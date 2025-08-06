@@ -1,0 +1,81 @@
+# Fix for Duplicate Log Messages in FileCreationService
+
+The FileCreationService.cs class has a duplicate log message in the CreateProductionUploadFileAsync method:
+
+```csharp
+_logger.LogInformation("Created production upload file: {FilePath}", filePath);
+_logger.LogInformation("Created production file: {FilePath}", filePath);
+```
+
+## Step 1: Fix the FileCreationService.cs file
+
+Open the Services\FileCreationService.cs file and locate the `CreateProductionUploadFileAsync` method.
+Replace the duplicate log message section with this optimized code:
+
+```csharp
+string barcode = data.ContainsKey("Barcode") ? data["Barcode"]?.ToString() ?? "Unknown" : "Unknown";
+#if DEBUG
+_logger.LogInformation("Created production file: {FilePath}", filePath);
+_logger.LogDebug("File content: '{Content}'", formattedMessage);
+#else
+_logger.LogInformation("Created file with formatted string, file name: {FileName}, barcode: {Barcode}", 
+    fileName, barcode);
+#endif
+```
+
+## Step 2: Update the CreateProductionFileFromDataAsync method
+
+Find the `CreateProductionFileFromDataAsync` method and replace its log messages with:
+
+```csharp
+string barcode = data.ContainsKey("Barcode") ? data["Barcode"]?.ToString() ?? "Unknown" : "Unknown";
+#if DEBUG
+_logger.LogInformation("Created production file: {FilePath} ({Size} bytes)", 
+    filePath, formattedMessage.Length);
+_logger.LogDebug("Production file content: '{Content}'", formattedMessage);
+#else
+_logger.LogInformation("Created string from entry, formatted string, barcode: {Barcode}", barcode);
+_logger.LogInformation("Created file with string, file name: {FileName}", fileName);
+#endif
+```
+
+## Step 3: Update the Worker.cs file
+
+In the Worker.cs file, add this code to the `ProcessDataFromSourceAsync` method after retrieving records but before creating files:
+
+```csharp
+#if !DEBUG
+// In RELEASE mode, log each record individually with barcode for better tracking
+foreach (var record in recordList)
+{
+    string barcode = record.Data.ContainsKey("Barcode") ? 
+        record.Data["Barcode"]?.ToString() ?? "Unknown" : "Unknown";
+    _logger.LogInformation("Found unsent entry, barcode: {Barcode}", barcode);
+}
+#endif
+```
+
+Also, update the successful upload logging in the same method:
+
+```csharp
+if (uploadResults[i])
+{
+#if !DEBUG
+    _logger.LogInformation("File uploaded successfully: {FileName}", 
+        Path.GetFileName(createdFiles[i]));
+#endif
+    successfullyUploadedFiles.Add(createdFiles[i]);
+}
+```
+
+## Step 4: Make the necessary methods virtual in FileCreationService
+
+Add the `virtual` keyword to the following methods in FileCreationService.cs:
+- CreateProductionUploadFileAsync
+- CreateProductionFileFromDataAsync
+- ArchiveFileAsync
+
+Example:
+```csharp
+public virtual async Task<string> CreateProductionUploadFileAsync(Dictionary<string, object> data, DateTime? customDateTime = null)
+```

@@ -337,14 +337,49 @@ namespace Systems_One_Sftp_Upload_Service.Services
                 
                 await Task.Run(() => _sftpClient!.UploadFile(fileStream, remotePath));
                 
-                // Verify upload by checking if file exists on remote
-                var uploadedFileExists = await Task.Run(() => _sftpClient!.Exists(remotePath));
+                // Verify upload by checking if file exists on remote with retry logic
+                bool uploadedFileExists = false;
+                const int maxVerificationRetries = 3;
+                const int verificationDelayMs = 500;
+                
+                for (int retryCount = 0; retryCount < maxVerificationRetries; retryCount++)
+                {
+                    try
+                    {
+                        // Small delay to allow server file system to sync
+                        if (retryCount > 0)
+                        {
+                            await Task.Delay(verificationDelayMs * retryCount);
+                        }
+                        
+                        uploadedFileExists = await Task.Run(() => _sftpClient!.Exists(remotePath));
+                        
+                        if (uploadedFileExists)
+                        {
+                            break; // File found, exit retry loop
+                        }
+                        
+                        _logger.LogDebug("Upload verification attempt {Attempt}/{MaxAttempts}: file not found yet", 
+                            retryCount + 1, maxVerificationRetries);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Upload verification attempt {Attempt}/{MaxAttempts} failed: {Error}", 
+                            retryCount + 1, maxVerificationRetries, ex.Message);
+                            
+                        if (retryCount == maxVerificationRetries - 1)
+                        {
+                            _logger.LogError("All upload verification attempts failed");
+                            return false;
+                        }
+                    }
+                }
                 
                 if (uploadedFileExists)
                 {
                     _logger.LogInformation("Successfully uploaded file: {FileName}", fileName);
                     
-                    // Log additional verification info
+                    // Log additional verification info with improved error handling
                     try
                     {
                         var remoteFileInfo = await Task.Run(() => _sftpClient!.GetAttributes(remotePath));
@@ -357,16 +392,27 @@ namespace Systems_One_Sftp_Upload_Service.Services
                                 fileInfo.Length, remoteFileInfo.Size);
                         }
                     }
+                    catch (Renci.SshNet.Common.SftpPathNotFoundException ex)
+                    {
+                        _logger.LogWarning(ex, "Could not verify remote file attributes - file may exist but not accessible: {RemotePath}", remotePath);
+                        // Don't fail the upload for this - the file exists check succeeded
+                    }
+                    catch (Renci.SshNet.Common.SftpPermissionDeniedException ex)
+                    {
+                        _logger.LogWarning(ex, "Permission denied when verifying remote file attributes: {RemotePath}", remotePath);
+                        // Don't fail the upload for this - the file exists check succeeded
+                    }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Could not verify remote file attributes");
+                        _logger.LogWarning(ex, "Could not verify remote file attributes: {RemotePath}", remotePath);
+                        // Don't fail the upload for this - the file exists check succeeded
                     }
                     
                     return true;
                 }
                 else
                 {
-                    _logger.LogError("Upload verification failed: remote file not found after upload");
+                    _logger.LogError("Upload verification failed: remote file not found after upload and retries");
                     return false;
                 }
             }
